@@ -1,0 +1,80 @@
+[NEAT]
+fitness_criterion     = max
+fitness_threshold     = 99999999
+pop_size              = 40
+reset_on_extinction   = True
+
+[DefaultGenome]
+# Estrutura da rede
+num_inputs            = 5
+num_hidden            = 0
+num_outputs           = 1
+
+# Conectividade
+initial_connection    = full
+feed_forward          = True
+single_structural_mutation = False
+
+# Ativações e agregações
+activation_default    = tanh
+activation_mutate_rate= 0.0
+activation_options    = tanh
+
+aggregation_default   = sum
+aggregation_mutate_rate= 0.0
+aggregation_options   = sum
+
+# Bias
+bias_init_mean        = 0.0
+bias_init_stdev       = 1.0
+bias_max_value        = 30.0
+bias_min_value        = -30.0
+bias_mutate_power     = 0.5
+bias_mutate_rate      = 0.7
+bias_replace_rate     = 0.1
+
+# Response (obrigatórios nesta versão)
+response_init_mean    = 1.0
+response_init_stdev   = 0.0
+response_max_value    = 30.0
+response_min_value    = -30.0
+response_mutate_power = 0.0
+response_mutate_rate  = 0.0
+response_replace_rate = 0.0
+
+# Pesos
+weight_init_mean      = 0.0
+weight_init_stdev     = 1.0
+weight_max_value      = 30.0
+weight_min_value      = -30.0
+weight_mutate_power   = 0.5
+weight_mutate_rate    = 0.8
+weight_replace_rate   = 0.1
+
+# Conexões
+conn_add_prob         = 0.5
+conn_delete_prob      = 0.3
+
+# Nós
+node_add_prob         = 0.2
+node_delete_prob      = 0.1
+
+# Ativação de conexões
+enabled_default       = True
+enabled_mutate_rate   = 0.01
+
+# Compatibilidade de espécies (obrigatório!)
+compatibility_disjoint_coefficient = 1.0
+compatibility_weight_coefficient   = 0.5
+
+[DefaultSpeciesSet]
+compatibility_threshold = 3.0
+
+[DefaultStagnation]
+species_fitness_func = max
+max_stagnation       = 20
+species_elitism      = 1
+
+[DefaultReproduction]
+elitism              = 2
+survival_threshold   = 0.2
