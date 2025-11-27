@@ -4,20 +4,12 @@ import math
 import time
 import pickle
 import random
-import shutil
-import multiprocessing
 from typing import Optional, Callable
 
 import pygame
 import neat
 
-# ==========================
-# ARQUIVOS DE GENOMA (IA)
-# ==========================
 ARQ_CAMPEAO = os.path.join(os.path.dirname(__file__), "melhor_genoma.pkl")
-ARQ_IA_1 = os.path.join(os.path.dirname(__file__), "IA_treinada_1.pkl")
-ARQ_IA_2 = os.path.join(os.path.dirname(__file__), "IA_treinada_2.pkl")
-TEMPOS_GERACOES = []
 
 # ==========================
 # CONFIG VISUAL / JOGO
@@ -37,12 +29,13 @@ MODO_HAI = "Humano vs IA"
 MODO_AIAI = "IA vs IA"
 MODO_TREINO = "Treinar IA (NEAT)"
 
-# Variáveis globais pygame (inicializadas no main)
-TELA = None
-CLOCK = None
-FONTE = None
-FONTE_M = None
-FONTE_P = None
+pygame.init()
+pygame.display.set_caption("Pong + NEAT")
+TELA = pygame.display.set_mode((LARGURA, ALTURA))
+CLOCK = pygame.time.Clock()
+FONTE = pygame.font.SysFont("arial", 44, bold=True)
+FONTE_M = pygame.font.SysFont("arial", 26)
+FONTE_P = pygame.font.SysFont("arial", 20)
 
 # ==========================
 # ENTIDADES
@@ -260,69 +253,21 @@ def ctrl_ai_heuristico(lag=0.0, erro=0.0, lado="dir"):
     return _ctrl
 
 def ctrl_por_rede(neural_net, lado="dir"):
-    """
-    Controlador baseado em rede neural.
-    Usa 8 inputs e 3 outputs (cima, parado, baixo).
-    """
+    # Entrada: [ball_x_norm, ball_y_norm, vx_norm, vy_norm, paddle_y_norm]
     def _norm(v, lo, hi):
         return (v - lo) / (hi - lo) * 2 - 1.0
-
     def _ctrl(estado):
-        # Inputs originais (5)
         bx = _norm(estado["ball_x"], 0, LARGURA)
         by = _norm(estado["ball_y"], 0, ALTURA)
         vx = _norm(estado["ball_vx"], -1000, 1000)
         vy = _norm(estado["ball_vy"], -1000, 1000)
-        py = _norm(
-            estado["right_y"] if lado == "dir" else estado["left_y"],
-            0, ALTURA
-        )
-
-        # Novos inputs (3)
-        paddle_y = estado["right_y"] if lado == "dir" else estado["left_y"]
-        dist_y_norm = by - py
-        
-        if lado == "dir":
-            dist_x = _norm(LARGURA - estado["ball_x"], 0, LARGURA)
-        else:
-            dist_x = _norm(estado["ball_x"], 0, LARGURA)
-
-        direction_toward_me = 1.0 if (
-            (lado == "dir" and estado["ball_vx"] > 0) or
-            (lado == "esq" and estado["ball_vx"] < 0)
-        ) else -1.0
-
-        # 8 inputs total
-        inputs = [bx, by, vx, vy, py, dist_y_norm, dist_x, direction_toward_me]
-
-        # 3 outputs com argmax
-        outputs = neural_net.activate(inputs)
-        max_idx = outputs.index(max(outputs))
-        
-        if max_idx == 0: return -1  # Cima
-        if max_idx == 2: return +1  # Baixo
-        return 0  # Parado
-
+        py = _norm(estado["right_y"] if lado == "dir" else estado["left_y"], 0, ALTURA)
+        out = neural_net.activate([bx, by, vx, vy, py])[0]
+        # saída > 0.33 = descer, < -0.33 = subir
+        if out > 0.33: return +1
+        if out < -0.33: return -1
+        return 0
     return _ctrl
-
-
-def carregar_ctrl_adversario(config, lado_oposto: str, arquivo_pkl: str):
-    """
-    Carrega adversário NEAT treinado ou retorna heurístico.
-    """
-    if os.path.exists(arquivo_pkl):
-        try:
-            with open(arquivo_pkl, "rb") as f:
-                campeao = pickle.load(f)
-            net_adversario = neat.nn.FeedForwardNetwork.create(campeao, config)
-            return ctrl_por_rede(net_adversario, lado=lado_oposto), "NEAT"
-        except Exception:
-            pass
-
-    # Fallback heurístico
-    lag = random.uniform(0.15, 0.35)
-    erro = random.uniform(6, 14)
-    return ctrl_ai_heuristico(lag=lag, erro=erro, lado=lado_oposto), "HEURISTICA"
 
 # ==========================
 # MENU
@@ -376,29 +321,22 @@ def jogar(modo: str, rede_campeao: Optional[neat.nn.FeedForwardNetwork] = None):
 
     elif modo == MODO_HAI:
         ctrl_esq = ctrl_humano_esquerda
-        # Carrega IA_2 para o lado direito
-        rede_ia2 = carregar_rede_campeao(os.path.join(os.path.dirname(__file__), "config-neat.txt"), ARQ_IA_2)
-        if rede_ia2:
-            ctrl_dir = ctrl_por_rede(rede_ia2, "dir")
-            overlay = ["Modo: Humano vs IA_2 (NEAT)", "IA_treinada_2.pkl carregada ✔"]
+        if rede_campeao:
+            ctrl_dir = ctrl_por_rede(rede_campeao, "dir")
+            overlay = ["Modo: Humano vs IA (NEAT)", "Campeão carregado ✔"]
         else:
             ctrl_dir = ctrl_ai_heuristico(lag=0.2, erro=12, lado="dir")
-            overlay = ["Modo: Humano vs IA (heurística)", "IA_treinada_2.pkl não encontrada ✖"]
+            overlay = ["Modo: Humano vs IA (heurística)", "Nenhum campeão encontrado ✖"]
 
     elif modo == MODO_AIAI:
-        # Carrega IA_1 (esquerda) e IA_2 (direita)
-        caminho_cfg = os.path.join(os.path.dirname(__file__), "config-neat.txt")
-        rede_ia1 = carregar_rede_campeao(caminho_cfg, ARQ_IA_1)
-        rede_ia2 = carregar_rede_campeao(caminho_cfg, ARQ_IA_2)
-        
-        if rede_ia1 and rede_ia2:
-            ctrl_esq = ctrl_por_rede(rede_ia1, "esq")
-            ctrl_dir = ctrl_por_rede(rede_ia2, "dir")
-            overlay = ["Modo: IA_1 vs IA_2 (NEAT)", "IAs treinadas carregadas ✔"]
+        if rede_campeao:
+            ctrl_esq = ctrl_por_rede(rede_campeao, "esq")
+            ctrl_dir = ctrl_por_rede(rede_campeao, "dir")
+            overlay = ["Modo: IA (NEAT) vs IA (NEAT)", "Campeão carregado ✔"]
         else:
             ctrl_esq = ctrl_ai_heuristico(lag=0.22, erro=10, lado="esq")
             ctrl_dir = ctrl_ai_heuristico(lag=0.25, erro=12, lado="dir")
-            overlay = ["Modo: IA heurística vs IA heurística", "IAs treinadas não encontradas ✖"]
+            overlay = ["Modo: IA heurística vs IA heurística", "Nenhum campeão encontrado ✖"]
     else:
         return
 
@@ -452,40 +390,29 @@ def avaliar_genoma(genome, config, render=False, tempo_max=5.0):
         # força o primeiro saque para um lado
         jogo.reiniciar_round("esq" if serve_para == "esq" else "dir")
 
-        # Define qual IA adversária carregar baseado no lado controlado
-        if lado_ctrl == "dir":
-            lado_adv = "esq"
-            arquivo_adv = ARQ_IA_1  # Adversário esquerdo
-        else:
-            lado_adv = "dir"
-            arquivo_adv = ARQ_IA_2  # Adversário direito
+        # adversário heurístico com ruído/latência variados
+        lag = random.uniform(0.15, 0.35)
+        erro = random.uniform(6, 14)
 
-        # Carrega o adversário (NEAT trained ou heurístico)
-        ctrl_adversario, nome_adv = carregar_ctrl_adversario(config, lado_adv, arquivo_adv)
-
-        # Atribui controladores
         if lado_ctrl == "dir":
-            ctrl_esq = ctrl_adversario
+            ctrl_esq = ctrl_ai_heuristico(lag=lag, erro=erro, lado="esq")
             ctrl_dir = _ctrl_by_net("dir")
-        else:
+        else:  # controla a esquerda
             ctrl_esq = _ctrl_by_net("esq")
-            ctrl_dir = ctrl_adversario
+            ctrl_dir = ctrl_ai_heuristico(lag=lag, erro=erro, lado="dir")
 
         inicio = time.time()
         fit = 0.0
 
         while True:
-            if render:
-                dt = CLOCK.tick(FPS) / 1000.0
-                for e in pygame.event.get():
-                    if e.type == pygame.QUIT:
-                        pygame.quit(); sys.exit()
-                    if e.type == pygame.KEYDOWN and e.key == pygame.K_ESCAPE:
-                        # permite cancelar o treino com ESC
-                        raise KeyboardInterrupt
-            else:
-                # Modo rápido: timestep fixo, SEM pygame
-                dt = 1.0 / 60.0
+            dt = (CLOCK.tick(FPS) / 1000.0) if render else (CLOCK.tick(240) / 1000.0)
+
+            for e in pygame.event.get():
+                if e.type == pygame.QUIT:
+                    pygame.quit(); sys.exit()
+                if e.type == pygame.KEYDOWN and e.key == pygame.K_ESCAPE:
+                    # permite cancelar o treino com ESC
+                    raise KeyboardInterrupt
 
             col_esq, col_dir, ponto = jogo.step(dt, ctrl_esq, ctrl_dir)
 
@@ -540,15 +467,6 @@ def avaliar_genoma(genome, config, render=False, tempo_max=5.0):
         total += _trial(lado, serve)
 
     return total / len(trials)
-
-
-def parallel_wrapper(genome, config_passed):
-    """
-    Wrapper para ParallelEvaluator - chamado por cada worker process.
-    NÃO pode usar pygame/TELA (processos filhos não têm contexto gráfico).
-    """
-    fitness = avaliar_genoma(genome, config_passed, render=False)
-    return fitness
 
 
 def func_avaliacao(genomas, config):
@@ -644,130 +562,15 @@ def carregar_rede_campeao(caminho_config: str, arquivo: str = ARQ_CAMPEAO):
 def main():
     base = os.path.dirname(__file__)
     caminho_cfg = os.path.join(base, "config-neat.txt")
-
-    # Parâmetros de treinamento co-evolutivo
-    NUM_RODADAS = 2       # Mais 2 rodadas (continua de onde parou)
-    GENS_POR_RODADA = 10  # Gerações de evolução em cada bloco
+    rede_campeao = carregar_rede_campeao(caminho_cfg)
 
     while True:
         modo = menu_inicial()
         if modo == MODO_TREINO:
-            treinar_co_evolutivo(caminho_cfg, 
-                                 num_rodadas=NUM_RODADAS, 
-                                 geracoes_por_rodada=GENS_POR_RODADA)
+            treinar_neat(caminho_cfg, geracoes=30, salvar_em="melhor_genoma.pkl")
+            rede_campeao = carregar_rede_campeao(caminho_cfg)  # recarrega campeão após treino
         else:
-            jogar(modo, rede_campeao=None)
-
-
-def treinar_co_evolutivo(caminho_cfg: str, num_rodadas: int, geracoes_por_rodada: int):
-    """
-    Treinamento co-evolutivo com bootstrap.
-    """
-    global geracao, TEMPOS_GERACOES
-    
-    TEMPOS_GERACOES.clear()
-    geracao = 0
-
-    # BOOTSTRAP DESABILITADO - Continua de onde parou!
-    # (IAs atuais: IA_1 fitness ~13k, IA_2 fitness ~6k)
-    # if os.path.exists(ARQ_CAMPEAO):
-    #     print(f"\n📚 Bootstrap: Copiando {os.path.basename(ARQ_CAMPEAO)} como base...")
-    #     shutil.copy(ARQ_CAMPEAO, ARQ_IA_1)
-    #     shutil.copy(ARQ_CAMPEAO, ARQ_IA_2)
-    #     print(f"   ✓ IA_1 e IA_2 iniciadas com conhecimento base\n")
-    # else:
-    #     print(f"\n⚠ {os.path.basename(ARQ_CAMPEAO)} não encontrado - começando do zero\n")
-
-    print(f"\n🔄 Continuando treinamento de IAs existentes...")
-    print(f"   IA_1: {os.path.basename(ARQ_IA_1)}")
-    print(f"   IA_2: {os.path.basename(ARQ_IA_2)}\n")
-
-    print(f"\n{'='*60}")
-    print(f"TREINAMENTO CO-EVOLUTIVO")
-    print(f"{'='*60}")
-    print(f"Rodadas: {num_rodadas}")
-    print(f"Gerações por rodada: {geracoes_por_rodada}")
-    print(f"Total de gerações: {num_rodadas * geracoes_por_rodada * 2}")
-    print(f"{'='*60}\n")
-
-    for i in range(1, num_rodadas + 1):
-        print(f"\n{'='*60}")
-        print(f"RODADA {i}/{num_rodadas}")
-        print(f"{'='*60}\n")
-
-        # Treina IA_2 contra IA_1
-        print(f"→ Treinando IA_2 contra IA_1...")
-        try:
-            _treinar_lado(caminho_cfg, ARQ_IA_2, ARQ_IA_1, geracoes_por_rodada)
-        except KeyboardInterrupt:
-            print(f"\n⚠ Treinamento interrompido na Rodada {i}")
-            return
-
-        # Treina IA_1 contra IA_2
-        print(f"\n→ Treinando IA_1 contra IA_2...")
-        try:
-            _treinar_lado(caminho_cfg, ARQ_IA_1, ARQ_IA_2, geracoes_por_rodada)
-        except KeyboardInterrupt:
-            print(f"\n⚠ Treinamento interrompido na Rodada {i}")
-            return
-
-    print(f"\n{'='*60}")
-    print(f"✓ TREINAMENTO CO-EVOLUTIVO CONCLUÍDO!")
-    print(f"{'='*60}\n")
-
-
-def _treinar_lado(caminho_config: str, arquivo_saida: str, adversario_pkl: str, geracoes=10):
-    """
-    Treina uma IA com MULTIPROCESSAMENTO.
-    """
-    global geracao
-    
-    config = neat.config.Config(neat.DefaultGenome,
-                                neat.DefaultReproduction,
-                                neat.DefaultSpeciesSet,
-                                neat.DefaultStagnation,
-                                caminho_config)
-
-    pop = neat.Population(config)
-    pop.add_reporter(neat.StdOutReporter(True))
-    pop.add_reporter(neat.StatisticsReporter())
-
-    nome_adversario = os.path.basename(adversario_pkl) if os.path.exists(adversario_pkl) else 'Heurística'
-    print(f"   Arquivo de saída: {os.path.basename(arquivo_saida)}")
-    print(f"   Adversário: {nome_adversario}")
-    print(f"   Gerações: {geracoes}")
-
-    # MULTIPROCESSAMENTO
-    num_cores = multiprocessing.cpu_count()
-    
-    if num_cores > 1:
-        evaluator = neat.ParallelEvaluator(num_cores, parallel_wrapper)
-        print(f"   🚀 Treinando com {num_cores} núcleos\n")
-        campeao = pop.run(evaluator.evaluate, geracoes)
-    else:
-        print(f"   ⚠ CPU com 1 núcleo - modo sequencial\n")
-        campeao = pop.run(func_avaliacao, geracoes)
-
-    with open(arquivo_saida, "wb") as f:
-        pickle.dump(campeao, f)
-
-    print(f"\n   ✓ Campeão salvo em {os.path.basename(arquivo_saida)}\n")
-    
-    return campeao
-
+            jogar(modo, rede_campeao=rede_campeao)
 
 if __name__ == "__main__":
-    # CRITICAL: multiprocessing no Windows requer freeze_support
-    multiprocessing.freeze_support()
-    
-    # Inicializa pygame APENAS no processo principal
-    pygame.init()
-    pygame.display.set_caption("Pong + NEAT")
-    TELA = pygame.display.set_mode((LARGURA, ALTURA))
-    CLOCK = pygame.time.Clock()
-    FONTE = pygame.font.SysFont("arial", 44, bold=True)
-    FONTE_M = pygame.font.SysFont("arial", 26)
-    FONTE_P = pygame.font.SysFont("arial", 20)
-    
-    # Inicia o jogo
     main()
